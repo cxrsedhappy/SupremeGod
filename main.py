@@ -3,14 +3,16 @@ import time
 import torch
 import curses
 import random
+import winsound
 
 from ascii_text import ShadedBlockyFont
+from collections import deque
 
 WIDTH = 100
 HEIGHT = 20
 ASCII_NUM_BACKGROUND = ord('░')
-ASCII_NUM_SNAKE = ord('▒')
-ASCII_NUM_APPLE = ord('█')
+ASCII_NUM_SNAKE = ord('█')
+ASCII_NUM_APPLE = ord('▒')
 
 
 class HeadDirection(enum.Enum):
@@ -40,10 +42,12 @@ class GUI:
         curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
 
     def __render_title(self):
+        """Renders title"""
         for i, line in enumerate(self.__title.split('\n')):
             self.stdscr.addstr(i, 0, line)
 
     def __render_params(self, ai_mode: bool, direction: tuple[int, int]):
+        """Renders params section on the GUI"""
         y_offset = len(self.__title.split('\n'))
 
         labels = [' Torch version: ', ' AI mode: ', ' Direction: ', ' AI move: ']
@@ -60,7 +64,7 @@ class GUI:
                            self.__style['corner'].join(self.__style["border_h"] * w for w in total_widths) +
                            self.__style['corner'])
 
-        # F*ck colours, all my homies use gray monitors
+        # F*ck uni-code colours all my homies use gray monitors
         self.stdscr.addstr(y_offset + 1, 0,
             f"{self.__style['border_v']}" +
             self.__style['border_v'].join(content) +
@@ -72,6 +76,10 @@ class GUI:
                            self.__style['corner'])
 
     def render_frame(self, ai_mode: bool, board: list[str], head_direction: tuple[int, int]):
+        """
+        Renders all GUI interface
+        You have to call next_frame() function in the game loop to display rendered text
+        """
         self.stdscr.clear()
         self.__render_title()
         self.__render_params(ai_mode, head_direction)
@@ -80,19 +88,27 @@ class GUI:
         for y, row in enumerate(board):
             self.stdscr.addstr(y + y_offset, 0, ''.join(row))
 
+    def next_frame(self):
         self.stdscr.refresh()
 
 
 class Game:
     def __init__(self, gui: GUI):
         self.__gui = gui
-        self.__ai_mode = False
+
         self.__board = [''.join([chr(ASCII_NUM_BACKGROUND) for _ in range(WIDTH)]) for _ in range(HEIGHT)]
-        self.__head_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
+        self.__apple_pos: tuple[int, int] = (15, 15)
+        self.__head_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_direction = HeadDirection.RIGHT.value
-        self.__running = True
+        self.__snake_body = deque([self.__head_pos])
+        self.__running: bool = True      # Is game running
+        self.__ai_mode: bool = False     # learning mode
+        self.__score:   int  = 0         # Player's score
+        self.__bx_scr:  int  = 0         # x pos where board starts
+        self.__by_scr:  int  = 8         # y pos where board starts
 
     def handle_input(self, key):
+        """TODO: find match key solution"""
         if key == ord('q'):
             self.__running = False
         elif key == ord('p'):
@@ -112,13 +128,62 @@ class Game:
             if key != -1:
                 self.handle_input(key)
 
-            self.update()
             self.__gui.render_frame(self.__ai_mode, self.__board, self.__head_direction)
+            self.update()
+            self.__gui.next_frame()
             time.sleep(0.1)
 
     def update(self):
-        if not self.__ai_mode:
-            ...
+        """Process snake render and internal logic"""
+        score_text = f'Score: {self.__score}'
+        self.__gui.stdscr.addstr(29, 0, f'{score_text:^{WIDTH}}')
+        match self.__ai_mode:
+            case 1:
+                # Render snake body
+                for pos in self.__snake_body:
+                    print(pos, len(self.__snake_body))
+                    # func(y, x, str)
+                    self.__gui.stdscr.addstr(self.__by_scr + pos[1], self.__bx_scr + pos[0], chr(ASCII_NUM_SNAKE))
+
+                # Render apple and score
+                self.__gui.stdscr.addstr(self.__by_scr + self.__apple_pos[1], self.__bx_scr + self.__apple_pos[0], chr(ASCII_NUM_APPLE))
+
+                # Tuple is immutable.
+                # head_dir[x, y]
+                # Make step
+                next_snake_head_pos = (
+                    self.__head_pos[0] + self.__head_direction[0],
+                    self.__head_pos[1] + self.__head_direction[1]
+                )
+
+                if self.is_boarder(next_snake_head_pos):
+                    self.__running = False
+
+                for i in range(len(self.__snake_body) - 1):
+                    if self.__head_pos == self.__snake_body[i]:
+                        self.__running = False
+
+                self.__head_pos = next_snake_head_pos
+                self.__snake_body.append(next_snake_head_pos)
+
+                if self.__head_pos == self.__apple_pos:
+                    self.__apple_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
+                    self.__score += 1
+                else:
+                    self.__snake_body.popleft()
+
+            case 0:
+                pass
+
+    @staticmethod
+    def is_boarder(position: tuple[int, int]) -> bool:
+        if 0 <= position[1] <= HEIGHT - 1 and 0 <= position[0] <= WIDTH - 1:
+            return False
+        return True
+
+    def get_score(self):
+        return self.__score
+
 
 
 def main(stdscr):
