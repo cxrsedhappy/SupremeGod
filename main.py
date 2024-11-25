@@ -1,12 +1,15 @@
 import enum
 import time
-import torch
 import curses
 import random
-import winsound
+import matplotlib.pyplot as plt
 
-from ascii_text import ShadedBlockyFont
 from collections import deque
+
+import numpy as np
+
+from agent import SnakeAgent
+from rendering import GUI
 
 WIDTH = 100
 HEIGHT = 20
@@ -25,94 +28,82 @@ class HeadDirection(enum.Enum):
         return self.name
 
 
-class GUI:
-    def __init__(self, stdscr):
-        self.stdscr = stdscr
-        self.__title = ShadedBlockyFont().render('supremegod')
-        self.__device_name: str = "cuda" if torch.cuda.is_available() else "cpu"
-        self.__torch_version = torch.__version__
-        self.__style = {
-            'border_h': '=',
-            'border_v': '║',
-            'corner': '╬',
-            'padding': 1
-        }
-        curses.start_color()
-        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
-
-    def __render_title(self):
-        """Renders title"""
-        for i, line in enumerate(self.__title.split('\n')):
-            self.stdscr.addstr(i, 0, line)
-
-    def __render_params(self, ai_mode: bool, direction: tuple[int, int]):
-        """Renders params section on the GUI"""
-        y_offset = len(self.__title.split('\n'))
-
-        labels = [' Torch version: ', ' AI mode: ', ' Direction: ', ' AI move: ']
-        values = [self.__torch_version, str(ai_mode), str(direction), '[0, 0, 1]']
-
-        total_widths = [35, 21, 19, 20]
-        value_widths = [total_widths[i] - len(labels[i]) for i in range(len(labels))]
-
-        content = []
-        for i in range(len(labels)):
-            content.append(f'{labels[i]}' + f'{values[i]:^{value_widths[i]}}')
-
-        self.stdscr.addstr(y_offset, 0, self.__style['corner'] +
-                           self.__style['corner'].join(self.__style["border_h"] * w for w in total_widths) +
-                           self.__style['corner'])
-
-        # F*ck uni-code colours all my homies use gray monitors
-        self.stdscr.addstr(y_offset + 1, 0,
-            f"{self.__style['border_v']}" +
-            self.__style['border_v'].join(content) +
-            f"{self.__style['border_v']}"
-        )
-
-        self.stdscr.addstr(y_offset + 2, 0, self.__style['corner'] +
-                           self.__style['corner'].join(self.__style["border_h"] * w for w in total_widths) +
-                           self.__style['corner'])
-
-    def render_frame(self, ai_mode: bool, board: list[str], head_direction: tuple[int, int]):
-        """
-        Renders all GUI interface
-        You have to call next_frame() function in the game loop to display rendered text
-        """
-        self.stdscr.clear()
-        self.__render_title()
-        self.__render_params(ai_mode, head_direction)
-
-        y_offset = len(self.__title.split('\n')) + 3
-        for y, row in enumerate(board):
-            self.stdscr.addstr(y + y_offset, 0, ''.join(row))
-
-    def next_frame(self):
-        self.stdscr.refresh()
-
-
 class Game:
     def __init__(self, gui: GUI):
         self.__gui = gui
 
+        self.agent = SnakeAgent()
+        self.iteration: int = 0
+        self.time_scale: int = 0
         self.__board = [''.join([chr(ASCII_NUM_BACKGROUND) for _ in range(WIDTH)]) for _ in range(HEIGHT)]
-        self.__apple_pos: tuple[int, int] = (15, 15)
+        self.__apple_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_direction = HeadDirection.RIGHT.value
         self.__snake_body = deque([self.__head_pos])
         self.__running: bool = True      # Is game running
-        self.__ai_mode: bool = False     # learning mode
+        self.__ai_mode: bool = True      # learning mode
+        self.__ai_move: int  = 2000
         self.__score:   int  = 0         # Player's score
         self.__bx_scr:  int  = 0         # x pos where board starts
         self.__by_scr:  int  = 8         # y pos where board starts
+        self.scores = []
 
-    def handle_input(self, key):
-        """TODO: find match key solution"""
+    def _get_relative_directions(self):
+        """Получение относительных направлений (лево, перед, право) относительно текущего направления"""
+        if self.__head_direction == HeadDirection.UP.value:
+            return [HeadDirection.LEFT.value, HeadDirection.UP.value, HeadDirection.RIGHT.value]
+        elif self.__head_direction == HeadDirection.RIGHT.value:
+            return [HeadDirection.UP.value, HeadDirection.RIGHT.value, HeadDirection.DOWN.value]
+        elif self.__head_direction == HeadDirection.DOWN.value:
+            return [HeadDirection.RIGHT.value, HeadDirection.DOWN.value, HeadDirection.LEFT.value]
+        else:  # LEFT
+            return [HeadDirection.DOWN.value, HeadDirection.LEFT.value, HeadDirection.UP.value]
+
+    def __check_head_on_apple(self, next_pos: tuple[int, int]):
+        if next_pos == self.__apple_pos:
+            self.__apple_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
+            self.__score += 1
+            self.__ai_move = 2000
+        else:
+            self.__snake_body.popleft()
+
+    def __render_entities(self):
+        """Render snake body and apple on the board and info about game"""
+        for pos in self.__snake_body:
+            self.__gui.stdscr.addstr(self.__by_scr + pos[1], self.__bx_scr + pos[0], chr(ASCII_NUM_SNAKE))
+
+        self.__gui.stdscr.addstr(
+            self.__by_scr + self.__apple_pos[1], self.__bx_scr + self.__apple_pos[0], chr(ASCII_NUM_APPLE)
+        )
+
+        footer_text = f'Score: {self.__score}'
+        if self.__ai_mode:
+            footer_text += f' Iteration: {self.iteration}'
+        self.__gui.stdscr.addstr(29, 0, f'{footer_text:^{WIDTH}}')
+
+
+    def __handle_input(self, key):
+        """
+        Handling keyboard inputs
+        TODO: find match key solution
+        """
+        current_move = self.__head_direction
+
         if key == ord('q'):
             self.__running = False
+            plt.plot(np.arange(0, self.iteration), self.scores)
+            plt.xlabel('Iteration')
+            plt.ylabel('Score')
+            plt.title('Learning Progress')
+            plt.grid(True)
+            plt.show()
+            self.agent.save_model()
         elif key == ord('p'):
             self.__ai_mode = not self.__ai_mode
+        elif key == ord('+'):
+            self.time_scale += 0.01
+        elif key == ord('-'):
+            self.time_scale -= 0.01
         elif key == curses.KEY_UP:
             self.__head_direction = HeadDirection.UP.value
         elif key == curses.KEY_DOWN:
@@ -122,58 +113,78 @@ class Game:
         elif key == curses.KEY_RIGHT:
             self.__head_direction = HeadDirection.RIGHT.value
 
+        # Checks if head direction is apposite
+        if (-1 * self.__head_direction[0], -1 * self.__head_direction[1]) == current_move:
+            self.__head_direction = current_move
+
+    def new_iteration(self):
+        """Starts new iteration of learning"""
+        self.__apple_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
+        self.__head_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
+        self.__head_direction = HeadDirection.RIGHT.value
+        self.__snake_body = deque([self.__head_pos])
+        self.__score = 0
+        self.__ai_move = 2000
+        self.iteration += 1
+
     def render(self):
+        """Renders frame. Also handle keyboard inputs"""
         while self.__running:
             key = self.__gui.stdscr.getch()
             if key != -1:
-                self.handle_input(key)
+                self.__handle_input(key)
 
-            self.__gui.render_frame(self.__ai_mode, self.__board, self.__head_direction)
+            self.__gui.render_frame(self.__ai_mode, self.__board, self.__head_direction, self.time_scale)
             self.update()
             self.__gui.next_frame()
-            time.sleep(0.1)
+            time.sleep(self.time_scale)
 
     def update(self):
-        """Process snake render and internal logic"""
-        score_text = f'Score: {self.__score}'
-        self.__gui.stdscr.addstr(29, 0, f'{score_text:^{WIDTH}}')
+        """Process game logic"""
         match self.__ai_mode:
-            case 1:
-                # Render snake body
-                for pos in self.__snake_body:
-                    print(pos, len(self.__snake_body))
-                    # func(y, x, str)
-                    self.__gui.stdscr.addstr(self.__by_scr + pos[1], self.__bx_scr + pos[0], chr(ASCII_NUM_SNAKE))
-
-                # Render apple and score
-                self.__gui.stdscr.addstr(self.__by_scr + self.__apple_pos[1], self.__bx_scr + self.__apple_pos[0], chr(ASCII_NUM_APPLE))
-
-                # Tuple is immutable.
-                # head_dir[x, y]
-                # Make step
-                next_snake_head_pos = (
-                    self.__head_pos[0] + self.__head_direction[0],
-                    self.__head_pos[1] + self.__head_direction[1]
+            case 0:
+                next_pos = (
+                    self.__head_pos[0] + self.__head_direction[0], self.__head_pos[1] + self.__head_direction[1]
                 )
 
-                if self.is_boarder(next_snake_head_pos):
+                if not self.is_boarder(next_pos) and next_pos not in self.__snake_body:
+                    self.__head_pos = next_pos
+                    self.__snake_body.append(next_pos)
+                    self.__check_head_on_apple(next_pos)
+                else:
                     self.__running = False
 
-                for i in range(len(self.__snake_body) - 1):
-                    if self.__head_pos == self.__snake_body[i]:
-                        self.__running = False
+            case 1:
+                obstacles, apple_pos = self.get_state_info()
+                state = self.agent.get_state(obstacles, apple_pos)
 
-                self.__head_pos = next_snake_head_pos
-                self.__snake_body.append(next_snake_head_pos)
+                action = self.agent.choose_action(state, self.__head_direction)
+                self.__head_direction = action
 
-                if self.__head_pos == self.__apple_pos:
-                    self.__apple_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
-                    self.__score += 1
+                next_pos = (
+                    self.__head_pos[0] + self.__head_direction[0], self.__head_pos[1] + self.__head_direction[1]
+                )
+
+                if not self.is_boarder(next_pos) and next_pos not in self.__snake_body and self.__ai_move >= 0:
+                    self.__head_pos = next_pos
+                    self.__snake_body.append(next_pos)
+                    self.__check_head_on_apple(next_pos)
                 else:
-                    self.__snake_body.popleft()
+                    if self.__score >= 15:
+                        self.agent.load_model(
+                            f'C:\\Users\\stasp\\PycharmProjects\\snake-reinforcement\\best\\model_iteration{self.iteration}S{self.__score}.pkl'
+                        )
+                    self.scores.append(self.__score)
+                    self.new_iteration()
 
-            case 0:
-                pass
+                self.__ai_move -= 1
+
+                next_obstacles, next_apple_pos = self.get_state_info()
+                next_state = self.agent.get_state(next_obstacles, next_apple_pos)
+
+                self.agent.learn(state, action, self.get_reward(next_pos), next_state)
+
+        self.__render_entities()
 
     @staticmethod
     def is_boarder(position: tuple[int, int]) -> bool:
@@ -181,9 +192,52 @@ class Game:
             return False
         return True
 
-    def get_score(self):
-        return self.__score
+    def get_state_info(self):
+        """Get state info"""
+        obstacles = []
+        apple_pos = []
 
+        directions = self._get_relative_directions()
+
+        for d in directions[:3]:
+            next_pos = (self.__head_pos[0] + d[0], self.__head_pos[1] + d[1])
+            is_obstacle = (self.is_boarder(next_pos) or next_pos in self.__snake_body)
+            obstacles.append(1 if is_obstacle else 0)
+
+        head_x, head_y = self.__head_pos
+        apple_x, apple_y = self.__apple_pos
+
+        # Left
+        apple_pos.append(1 if apple_x < head_x else 0)
+        # Forward
+        apple_pos.append(1 if (
+                (self.__head_direction == HeadDirection.UP.value and apple_y < head_y) or
+                (self.__head_direction == HeadDirection.DOWN.value and apple_y > head_y) or
+                (self.__head_direction == HeadDirection.RIGHT.value and apple_x > head_x) or
+                (self.__head_direction == HeadDirection.LEFT.value and apple_x < head_x)
+        ) else 0)
+        # Right
+        apple_pos.append(1 if apple_x > head_x else 0)
+        # Down
+        apple_pos.append(1 if apple_y > head_y else 0)
+
+        return obstacles, apple_pos
+
+    def get_reward(self, next_pos):
+        """Reward based on move"""
+        if self.is_boarder(next_pos) or next_pos in self.__snake_body:
+            return -10  # Увеличим штраф за столкновение
+        elif next_pos == self.__apple_pos:
+            return 10  # Увеличим награду за яблоко
+        else:
+            current_distance = self.manhattan_distance(self.__head_pos, self.__apple_pos)
+            new_distance = self.manhattan_distance(next_pos, self.__apple_pos)
+            if new_distance < current_distance:
+                return 1  # Увеличим награду за приближение к яблоку
+            return -0.1  # Увеличим штраф за отдаление от яблока
+
+    def manhattan_distance(self, pos1, pos2):
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
 
 def main(stdscr):
