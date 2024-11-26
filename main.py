@@ -30,11 +30,13 @@ class HeadDirection(enum.Enum):
 
 class Game:
     def __init__(self, gui: GUI):
+        """Todo: FIX IEEE MANTISSA PROBLEM"""
         self.__gui = gui
 
         self.agent = SnakeAgent()
-        self.iteration: int = 0
-        self.time_scale: int = 0
+        self.iteration:  int   = 0
+        self.time_scale: float = 0.00
+
         self.__board = [''.join([chr(ASCII_NUM_BACKGROUND) for _ in range(WIDTH)]) for _ in range(HEIGHT)]
         self.__apple_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
@@ -49,26 +51,31 @@ class Game:
         self.scores = []
 
     def _get_relative_directions(self):
-        """Получение относительных направлений (лево, перед, право) относительно текущего направления"""
+        """Get position (Left, forward, right) relative to current head direction"""
         if self.__head_direction == HeadDirection.UP.value:
             return [HeadDirection.LEFT.value, HeadDirection.UP.value, HeadDirection.RIGHT.value]
         elif self.__head_direction == HeadDirection.RIGHT.value:
             return [HeadDirection.UP.value, HeadDirection.RIGHT.value, HeadDirection.DOWN.value]
         elif self.__head_direction == HeadDirection.DOWN.value:
             return [HeadDirection.RIGHT.value, HeadDirection.DOWN.value, HeadDirection.LEFT.value]
-        else:  # LEFT
+        else:
             return [HeadDirection.DOWN.value, HeadDirection.LEFT.value, HeadDirection.UP.value]
 
     def __check_head_on_apple(self, next_pos: tuple[int, int]):
+        """Process check if snake head on the apple"""
         if next_pos == self.__apple_pos:
             self.__apple_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
             self.__score += 1
-            self.__ai_move = 2000
+
+            # Update available AI moves
+            if self.__ai_mode:
+                self.__ai_move = 2000
+
         else:
             self.__snake_body.popleft()
 
     def __render_entities(self):
-        """Render snake body and apple on the board and info about game"""
+        """Render Entities (Snake, Apple) and info about current game"""
         for pos in self.__snake_body:
             self.__gui.stdscr.addstr(self.__by_scr + pos[1], self.__bx_scr + pos[0], chr(ASCII_NUM_SNAKE))
 
@@ -77,8 +84,10 @@ class Game:
         )
 
         footer_text = f'Score: {self.__score}'
+
         if self.__ai_mode:
             footer_text += f' Iteration: {self.iteration}'
+
         self.__gui.stdscr.addstr(29, 0, f'{footer_text:^{WIDTH}}')
 
 
@@ -91,19 +100,23 @@ class Game:
 
         if key == ord('q'):
             self.__running = False
-            plt.plot(np.arange(0, self.iteration), self.scores)
-            plt.xlabel('Iteration')
-            plt.ylabel('Score')
-            plt.title('Learning Progress')
-            plt.grid(True)
-            plt.show()
-            self.agent.save_model()
+
+            # If the game in AI mode -> plot
+            if self.__ai_mode:
+                plt.plot(np.arange(0, self.iteration), self.scores)
+                plt.xlabel('Iteration')
+                plt.ylabel('Score')
+                plt.title('Learning Progress')
+                plt.grid(True)
+                plt.show()
+                self.agent.save_model()
+
         elif key == ord('p'):
             self.__ai_mode = not self.__ai_mode
         elif key == ord('+'):
-            self.time_scale += 0.01
+            self.time_scale += 0.02
         elif key == ord('-'):
-            self.time_scale -= 0.01
+            self.time_scale -= 0.02
         elif key == curses.KEY_UP:
             self.__head_direction = HeadDirection.UP.value
         elif key == curses.KEY_DOWN:
@@ -113,12 +126,22 @@ class Game:
         elif key == curses.KEY_RIGHT:
             self.__head_direction = HeadDirection.RIGHT.value
 
-        # Checks if head direction is apposite
+        # We cannot move to the back
         if (-1 * self.__head_direction[0], -1 * self.__head_direction[1]) == current_move:
             self.__head_direction = current_move
 
+    @staticmethod
+    def is_boarder(position: tuple[int, int]) -> bool:
+        if 0 <= position[1] <= HEIGHT - 1 and 0 <= position[0] <= WIDTH - 1:
+            return False
+        return True
+
+    @staticmethod
+    def manhattan_distance(pos1, pos2):
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
     def new_iteration(self):
-        """Starts new iteration of learning"""
+        """Updates information"""
         self.__apple_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_direction = HeadDirection.RIGHT.value
@@ -170,10 +193,11 @@ class Game:
                     self.__snake_body.append(next_pos)
                     self.__check_head_on_apple(next_pos)
                 else:
+
+                    # We want to save best model weights
                     if self.__score >= 15:
-                        self.agent.load_model(
-                            f'C:\\Users\\stasp\\PycharmProjects\\snake-reinforcement\\best\\model_iteration{self.iteration}S{self.__score}.pkl'
-                        )
+                        self.agent.load_model('best\\model_iteration.pkl')
+
                     self.scores.append(self.__score)
                     self.new_iteration()
 
@@ -186,14 +210,8 @@ class Game:
 
         self.__render_entities()
 
-    @staticmethod
-    def is_boarder(position: tuple[int, int]) -> bool:
-        if 0 <= position[1] <= HEIGHT - 1 and 0 <= position[0] <= WIDTH - 1:
-            return False
-        return True
-
     def get_state_info(self):
-        """Get state info"""
+        """Get state info (danger[3], head pos relative to apple[4])"""
         obstacles = []
         apple_pos = []
 
@@ -207,37 +225,30 @@ class Game:
         head_x, head_y = self.__head_pos
         apple_x, apple_y = self.__apple_pos
 
-        # Left
-        apple_pos.append(1 if apple_x < head_x else 0)
-        # Forward
+        apple_pos.append(1 if apple_x < head_x else 0)  # Left
         apple_pos.append(1 if (
                 (self.__head_direction == HeadDirection.UP.value and apple_y < head_y) or
                 (self.__head_direction == HeadDirection.DOWN.value and apple_y > head_y) or
                 (self.__head_direction == HeadDirection.RIGHT.value and apple_x > head_x) or
                 (self.__head_direction == HeadDirection.LEFT.value and apple_x < head_x)
-        ) else 0)
-        # Right
-        apple_pos.append(1 if apple_x > head_x else 0)
-        # Down
-        apple_pos.append(1 if apple_y > head_y else 0)
+        ) else 0)  # Forward
+        apple_pos.append(1 if apple_x > head_x else 0)  # Right
+        apple_pos.append(1 if apple_y > head_y else 0)  # Down
 
         return obstacles, apple_pos
 
     def get_reward(self, next_pos):
-        """Reward based on move"""
+        """Reward based on next move"""
         if self.is_boarder(next_pos) or next_pos in self.__snake_body:
-            return -10  # Увеличим штраф за столкновение
+            return -10
         elif next_pos == self.__apple_pos:
-            return 10  # Увеличим награду за яблоко
+            return 10
         else:
             current_distance = self.manhattan_distance(self.__head_pos, self.__apple_pos)
             new_distance = self.manhattan_distance(next_pos, self.__apple_pos)
             if new_distance < current_distance:
-                return 1  # Увеличим награду за приближение к яблоку
-            return -0.1  # Увеличим штраф за отдаление от яблока
-
-    def manhattan_distance(self, pos1, pos2):
-        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+                return 1
+            return -0.1
 
 
 def main(stdscr):
