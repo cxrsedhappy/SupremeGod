@@ -4,6 +4,13 @@ SupremeGod is a console-based "Snake" game created as an environment for trainin
 
 The environment is built based on prototypes of real game frameworks: all functions are documented, the code is modular, and variables are encapsulated for ease of expansion and training.
 
+![Gameplay](best/gameplay.png "Gameplay")
+
+Learning process
+
+![Plot](best/learning.png "Learning process")
+
+
 ---
 
 ## 🚀 Key Features
@@ -47,7 +54,7 @@ This project is licensed under the MIT License. You can find the full license te
 
 ## 💡 Ideas for Improvement
 - Expanding the game functionality.
-- Integrating other training algorithms (e.g., Deep Q-Learning).
+- Integrating other training algorithms (e.g., Deep Q-Learning) (Working).
 - Visualizing the training process using graphical libraries.
 
 ## 🤝 Contributing
