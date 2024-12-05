@@ -64,6 +64,8 @@ class SnakeAgent:
             print(f"Error occurred when trying to save the model: {e}")
 
     def load_model(self, filename='best\\snake_agent.pkl'):
+        os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
+
         try:
             if os.path.exists(filename):
                 with open(filename, 'rb') as f:
