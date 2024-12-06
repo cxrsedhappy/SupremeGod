@@ -1,57 +1,43 @@
-import enum
 import time
+import numpy as np
 import curses
 import random
 import matplotlib.pyplot as plt
 
 from collections import deque
 
-import numpy as np
-
 from agent import SnakeAgent
+from settings import *
 from rendering import GUI
-
-WIDTH = 100
-HEIGHT = 20
-ASCII_NUM_BACKGROUND = ord('░')
-ASCII_NUM_SNAKE = ord('█')
-ASCII_NUM_APPLE = ord('▒')
-
-
-class HeadDirection(enum.Enum):
-    UP: tuple[int, int] = (0, -1)
-    RIGHT: tuple[int, int] = (1, 0)
-    DOWN: tuple[int, int] = (0, 1)
-    LEFT: tuple[int, int] = (-1, 0)
-
-    def __str__(self):
-        return self.name
-
 
 class Game:
     def __init__(self, gui: GUI):
         """Todo: FIX IEEE MANTISSA PROBLEM"""
         self.__gui = gui
 
+        self.mode = Modes.PLAYER                        # Learning mode
         self.agent = SnakeAgent()
-        self.iteration:  int   = 0
-        self.time_scale: float = 0.00
+        self.iteration: int = 0
+        self.scores: list[int] = []
+        self.time_scale: int = 10                       # Time scale num
 
         self.__board = [''.join([chr(ASCII_NUM_BACKGROUND) for _ in range(WIDTH)]) for _ in range(HEIGHT)]
         self.__apple_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_pos: tuple[int, int] = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_direction = HeadDirection.RIGHT.value
         self.__snake_body = deque([self.__head_pos])
-        self.__running: bool = True      # Is game running
-        self.__ai_mode: bool = True      # learning mode
-        self.__ai_move: int  = 2000
-        self.__score:   int  = 0         # Player's score
-        self.__bx_scr:  int  = 0         # x pos where board starts
-        self.__by_scr:  int  = 8         # y pos where board starts
-        self.scores = []
+        self.__running: bool = True                     # Is game running
+
+        self.__move_per_iter: int = MOVES_PER_ITER      # For each AI iteration we give 2000 moves
+        self.__score:   int  = 0                        # Player's score
+        self.__bx_scr:  int  = 0                        # x pos where board starts
+        self.__by_scr:  int  = 8                        # y pos where board starts
 
     def _get_relative_directions(self):
-        """Get position (Left, forward, right) relative to current head direction"""
+        """
+        Get position (Left, forward, right) relative to current head direction
+        Used by Q-Learning algorithm
+        """
         if self.__head_direction == HeadDirection.UP.value:
             return [HeadDirection.LEFT.value, HeadDirection.UP.value, HeadDirection.RIGHT.value]
         elif self.__head_direction == HeadDirection.RIGHT.value:
@@ -68,8 +54,8 @@ class Game:
             self.__score += 1
 
             # Update available AI moves
-            if self.__ai_mode:
-                self.__ai_move = 2000
+            if self.mode != Modes.PLAYER:
+                self.__move_per_iter = 2000
 
         else:
             self.__snake_body.popleft()
@@ -85,7 +71,7 @@ class Game:
 
         footer_text = f'Score: {self.__score}'
 
-        if self.__ai_mode:
+        if self.mode != Modes.PLAYER:
             footer_text += f' Iteration: {self.iteration}'
 
         self.__gui.stdscr.addstr(29, 0, f'{footer_text:^{WIDTH}}')
@@ -101,22 +87,30 @@ class Game:
         if key == ord('q'):
             self.__running = False
 
-            # If the game in AI mode -> plot
-            if self.__ai_mode:
+            # if the game in AI mode -> plot
+            if self.mode != Modes.PLAYER:
                 plt.plot(np.arange(0, self.iteration), self.scores)
                 plt.xlabel('Iteration')
                 plt.ylabel('Score')
                 plt.title('Learning Progress')
                 plt.grid(True)
                 plt.show()
-                self.agent.save_model()
 
+        # better use bytes shift??? sliding one 0x001 and << >> this dude
+        elif key == ord('i'):
+            self.mode = Modes.DQL
+        elif key == ord('o'):
+            self.mode = Modes.QL
         elif key == ord('p'):
-            self.__ai_mode = not self.__ai_mode
-        elif key == ord('+'):
-            self.time_scale += 0.02
+            self.mode = Modes.PLAYER
+
+        # Time scale
+        elif key == ord('='):
+            self.time_scale += 1
         elif key == ord('-'):
-            self.time_scale -= 0.02
+            self.time_scale -= 1
+
+        # movement control
         elif key == curses.KEY_UP:
             self.__head_direction = HeadDirection.UP.value
         elif key == curses.KEY_DOWN:
@@ -126,7 +120,7 @@ class Game:
         elif key == curses.KEY_RIGHT:
             self.__head_direction = HeadDirection.RIGHT.value
 
-        # We cannot move to the back
+        # we cannot move to the back
         if (-1 * self.__head_direction[0], -1 * self.__head_direction[1]) == current_move:
             self.__head_direction = current_move
 
@@ -146,26 +140,27 @@ class Game:
         self.__head_pos = (random.randint(0, WIDTH - 1), random.randint(0, HEIGHT - 1))
         self.__head_direction = HeadDirection.RIGHT.value
         self.__snake_body = deque([self.__head_pos])
+        self.__move_per_iter = MOVES_PER_ITER
         self.__score = 0
-        self.__ai_move = 2000
         self.iteration += 1
 
     def render(self):
         """Renders frame. Also handle keyboard inputs"""
         while self.__running:
             key = self.__gui.stdscr.getch()
+
             if key != -1:
                 self.__handle_input(key)
 
-            self.__gui.render_frame(self.__ai_mode, self.__board, self.__head_direction, self.time_scale)
+            self.__gui.render_frame(self.__board, self.mode, self.__head_direction, self.time_scale)
             self.update()
             self.__gui.next_frame()
-            time.sleep(self.time_scale)
+            time.sleep(self.time_scale / 100)
 
     def update(self):
         """Process game logic"""
-        match self.__ai_mode:
-            case 0:
+        match self.mode:
+            case Modes.PLAYER:
                 next_pos = (
                     self.__head_pos[0] + self.__head_direction[0], self.__head_pos[1] + self.__head_direction[1]
                 )
@@ -177,7 +172,7 @@ class Game:
                 else:
                     self.__running = False
 
-            case 1:
+            case Modes.QL:
                 obstacles, apple_pos = self.get_state_info()
                 state = self.agent.get_state(obstacles, apple_pos)
 
@@ -188,25 +183,27 @@ class Game:
                     self.__head_pos[0] + self.__head_direction[0], self.__head_pos[1] + self.__head_direction[1]
                 )
 
-                if not self.is_boarder(next_pos) and next_pos not in self.__snake_body and self.__ai_move >= 0:
+                if not self.is_boarder(next_pos) and next_pos not in self.__snake_body:
                     self.__head_pos = next_pos
                     self.__snake_body.append(next_pos)
                     self.__check_head_on_apple(next_pos)
                 else:
 
-                    # We want to save best model weights
-                    if self.__score >= 15:
-                        self.agent.load_model('best\\model_iteration.pkl')
+                    # if self.__score >= 15:
+                    #     self.agent.load_model('best\\model_iteration.pkl')
 
                     self.scores.append(self.__score)
                     self.new_iteration()
 
-                self.__ai_move -= 1
+                self.__move_per_iter -= 1
 
                 next_obstacles, next_apple_pos = self.get_state_info()
                 next_state = self.agent.get_state(next_obstacles, next_apple_pos)
 
                 self.agent.learn(state, action, self.get_reward(next_pos), next_state)
+
+            case Modes.DQL:
+                pass
 
         self.__render_entities()
 
@@ -231,7 +228,7 @@ class Game:
                 (self.__head_direction == HeadDirection.DOWN.value and apple_y > head_y) or
                 (self.__head_direction == HeadDirection.RIGHT.value and apple_x > head_x) or
                 (self.__head_direction == HeadDirection.LEFT.value and apple_x < head_x)
-        ) else 0)  # Forward
+        ) else 0)                                       # Forward
         apple_pos.append(1 if apple_x > head_x else 0)  # Right
         apple_pos.append(1 if apple_y > head_y else 0)  # Down
 

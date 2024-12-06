@@ -1,6 +1,7 @@
 import torch
 import curses
 
+from settings import *
 from ascii_text import ShadedBlockyFont
 
 
@@ -25,14 +26,14 @@ class GUI:
         for i, line in enumerate(self.__title.split('\n')):
             self.stdscr.addstr(i, 0, line)
 
-    def __render_params(self, ai_mode: bool, direction: tuple[int, int], time_scale: float):
+    def __render_params(self, mode: Modes, direction: tuple[int, int], time_scale: int):
         """Renders params section on the GUI"""
         y_offset = len(self.__title.split('\n'))
 
         labels = [' Torch version: ', ' AI mode: ', ' Direction: ', ' Time scale: ']
-        values = [self.__torch_version, str(ai_mode), str(direction), time_scale]
+        values = [self.__torch_version, str(mode), str(direction), time_scale]
 
-        total_widths = [35, 21, 19, 20]
+        total_widths = [32, 24, 19, 20]
         value_widths = [total_widths[i] - len(labels[i]) for i in range(len(labels))]
 
         content = []
@@ -43,7 +44,7 @@ class GUI:
                            self.__style['corner'].join(self.__style["border_h"] * w for w in total_widths) +
                            self.__style['corner'])
 
-        # F*ck uni-code colours all my homies use gray monitors
+        # Fuck uni-code colours all my homies use gray monitors
         self.stdscr.addstr(y_offset + 1, 0,
             f"{self.__style['border_v']}" +
             self.__style['border_v'].join(content) +
@@ -54,7 +55,7 @@ class GUI:
                            self.__style['corner'].join(self.__style["border_h"] * w for w in total_widths) +
                            self.__style['corner'])
 
-    def render_frame(self, ai_mode: bool, board: list[str], head_direction: tuple[int, int], time_scale: float):
+    def render_frame(self, board: list[str], mode: Modes, head_direction: tuple[int, int], time_scale: int):
         """
         Renders all GUI interface
         You have to call next_frame() function in the game loop to display rendered text
@@ -62,7 +63,7 @@ class GUI:
         """
         self.stdscr.clear()
         self.__render_title()
-        self.__render_params(ai_mode, head_direction, time_scale)
+        self.__render_params(mode, head_direction, time_scale)
 
         y_offset = len(self.__title.split('\n')) + 3
         for y, row in enumerate(board):
