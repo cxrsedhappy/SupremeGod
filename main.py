@@ -6,17 +6,23 @@ import matplotlib.pyplot as plt
 
 from collections import deque
 
+import torch
+
 from agent import SnakeAgent
+from agent_dql import DQLAgent
 from settings import *
 from rendering import GUI
 
 class Game:
     def __init__(self, gui: GUI):
-        """Todo: FIX IEEE MANTISSA PROBLEM"""
         self.__gui = gui
 
-        self.mode = Modes.PLAYER                        # Learning mode
-        self.agent = SnakeAgent()
+        self.mode = Modes.DQL                     # Learning mode
+        self.agent: None | DQLAgent | SnakeAgent = DQLAgent()
+
+        if self.mode == Modes.DQL:
+            self.agent.load_model()
+
         self.iteration: int = 0
         self.scores: list[int] = []
         self.time_scale: int = 10                       # Time scale num
@@ -55,7 +61,7 @@ class Game:
 
             # Update available AI moves
             if self.mode != Modes.PLAYER:
-                self.__move_per_iter = 2000
+                self.__move_per_iter = MOVES_PER_ITER
 
         else:
             self.__snake_body.popleft()
@@ -99,10 +105,13 @@ class Game:
         # better use bytes shift??? sliding one 0x001 and << >> this dude
         elif key == ord('i'):
             self.mode = Modes.DQL
+            self.agent = DQLAgent()
         elif key == ord('o'):
             self.mode = Modes.QL
+            self.agent = SnakeAgent()
         elif key == ord('p'):
             self.mode = Modes.PLAYER
+            self.agent = None
 
         # Time scale
         elif key == ord('='):
@@ -133,6 +142,35 @@ class Game:
     @staticmethod
     def manhattan_distance(pos1, pos2):
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+    def get_board_state(self):
+        """
+        Create matrix 9x9 around snake's head
+        0 - Empty
+        1 - Danger
+        2 - Apple
+        """
+        board = np.zeros((9, 9))
+        head_x, head_y = self.__head_pos
+
+        for i in range(-4, 5):
+            for j in range(-4, 5):
+                x = head_x + i
+                y = head_y + j
+
+                # Boarder check
+                if self.is_boarder((x, y)):
+                    board[j + 4][i + 4] = 1
+                # Snake body
+                elif (x, y) in self.__snake_body:
+                    board[j + 4][i + 4] = 1
+                # Apple
+                elif (x, y) == self.__apple_pos:
+                    board[j + 4][i + 4] = 2
+                else:
+                    board[j + 4][i + 4] = 0
+
+        return board
 
     def new_iteration(self):
         """Updates information"""
@@ -188,10 +226,6 @@ class Game:
                     self.__snake_body.append(next_pos)
                     self.__check_head_on_apple(next_pos)
                 else:
-
-                    # if self.__score >= 15:
-                    #     self.agent.load_model('best\\model_iteration.pkl')
-
                     self.scores.append(self.__score)
                     self.new_iteration()
 
@@ -203,7 +237,68 @@ class Game:
                 self.agent.learn(state, action, self.get_reward(next_pos), next_state)
 
             case Modes.DQL:
-                pass
+                current_state = self.get_board_state()
+                current_state = torch.FloatTensor(current_state)
+
+                # Determine valid actions
+                valid_actions = []
+                opposite_actions = {
+                    (1, 0): (-1, 0),  # RIGHT -> LEFT
+                    (-1, 0): (1, 0),  # LEFT -> RIGHT
+                    (0, 1): (0, -1),  # DOWN -> UP
+                    (0, -1): (0, 1)  # UP -> DOWN
+                }
+
+                # Opposite action check
+                for action in self.agent.actions:
+                    next_pos = (self.__head_pos[0] + action[0], self.__head_pos[1] + action[1])
+                    if (not self.is_boarder(next_pos) and
+                            next_pos not in self.__snake_body and
+                            action != opposite_actions.get(self.__head_direction, None)):
+                        valid_actions.append(action)
+
+                if not valid_actions:
+                    self.scores.append(self.__score)
+                    self.new_iteration()
+                    return
+
+                self.__head_direction = self.agent.choose_action(current_state, valid_actions)
+
+                next_pos = (
+                    self.__head_pos[0] + self.__head_direction[0],
+                    self.__head_pos[1] + self.__head_direction[1]
+                )
+
+                reward = self.get_reward(next_pos)
+
+                if not self.is_boarder(next_pos) and next_pos not in self.__snake_body:
+                    self.__head_pos = next_pos
+                    self.__snake_body.append(next_pos)
+                    self.__check_head_on_apple(next_pos)
+
+                    next_state = self.get_board_state()
+                    next_state = torch.FloatTensor(next_state)
+
+                    self.agent.memory.append((current_state, self.__head_direction, reward, next_state, False))
+
+                else:
+                    next_state = self.get_board_state()
+                    next_state = torch.FloatTensor(next_state)
+
+                    self.agent.memory.append((current_state, self.__head_direction, reward, next_state, True))
+
+                    self.scores.append(self.__score)
+                    self.new_iteration()
+
+                self.agent.replay()
+                self.__move_per_iter -= 1
+
+                if self.__move_per_iter <= 0:
+                    self.scores.append(self.__score)
+                    self.new_iteration()
+
+                if self.iteration + 1 % 100 == 0:
+                    self.agent.save_model()
 
         self.__render_entities()
 
@@ -237,15 +332,15 @@ class Game:
     def get_reward(self, next_pos):
         """Reward based on next move"""
         if self.is_boarder(next_pos) or next_pos in self.__snake_body:
-            return -10
+            return DEATH_REWARD
         elif next_pos == self.__apple_pos:
-            return 10
+            return GOT_AN_APPLE_REWARD
         else:
             current_distance = self.manhattan_distance(self.__head_pos, self.__apple_pos)
             new_distance = self.manhattan_distance(next_pos, self.__apple_pos)
             if new_distance < current_distance:
-                return 1
-            return -0.1
+                return CLOSE_TO_APPLE_REWARD
+            return AWAY_TO_APPLE_REWARD
 
 
 def main(stdscr):

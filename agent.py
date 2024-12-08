@@ -54,7 +54,7 @@ class SnakeAgent:
         # Уменьшаем epsilon
         self.epsilon = max(0.01, self.epsilon * self.epsilon_decay)
 
-    def save_model(self, filename='best\\snake_agent.pkl'):
+    def save_model(self, filename='models\\snake_agent.pkl'):
         os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
 
         try:
@@ -63,7 +63,7 @@ class SnakeAgent:
         except Exception as e:
             print(f"Error occurred when trying to save the model: {e}")
 
-    def load_model(self, filename='best\\snake_agent.pkl'):
+    def load_model(self, filename='models\\snake_agent.pkl'):
         os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
 
         try:
